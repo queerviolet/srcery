@@ -1,5 +1,5 @@
 {
-  "name": "scratch",
+  "name": "srcery",
   "version": "0.0.0",
   "description": "",
   "main": "index.js",
@@ -8,5 +8,12 @@
   },
   "keywords": [],
   "author": "Ashi Krishnan <hi@ashi.io>",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "immutable": "^3.8.2",
+    "source-map": "^0.6.1"
+  },
+  "devDependencies": {
+    "webpack": "^3.8.1"
+  }
 }
