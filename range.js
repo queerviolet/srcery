@@ -1,12 +1,16 @@
+'use strict'
 const {Record, Seq} = require('immutable')
     , {compile} = require('.')
     , {promisify} = require('util')
+    , {sortedIndexBy} = require('lodash')
 
-const Location = Record({
-  line: 1,
-  column: 1,
-  offset: 0,
-})
+class Location {
+  constructor({line=1, column=1, offset=0}={}) {
+    Object.assign(this, {line, column, offset})
+  }
+
+  toString() { return `Location(${JSON.stringify(this)})` }
+}
 
 class File {
   static load(path, {fs=require('fs'), encoding='utf-8'}={}) {
@@ -14,10 +18,14 @@ class File {
       .then(src => new File(path, src))
   }
 
+  toString() {
+    return `File({path:${this.path}})`
+  }
+
   constructor(path, content) {
     this.path = path
     this.content = content.toString('utf-8')
-    this.breaks = lineBreaks(content)
+    this.lines = lines(this)
   }
 
   get end() {
@@ -32,64 +40,74 @@ class File {
     })
   }
 
+  lineAtOffset(offset) {
+    const {lines} = this
+    return lines[sortedIndexBy(lines,
+      {end: {offset}},
+      ({end: {offset}}) => offset)]
+  }
+
+  locationAtOffset(offset) {
+    const line = this.lineAtOffset(offset)
+    if (!line) return
+    return new Location({
+      line: line.start.line,
+      column: offset - line.start.offset,
+      offset
+    })
+  }
+
   get range() {
     return new Range({
       file: this,
       end: this.end,
     })
   }
-
-  get count() {
-    const value = this.breaks.length + 1
-    Object.defineProperty(this, 'count', {value})    
-    return value
-  }
-
-  line(line) {
-    const {breaks} = this
-    if (line < 0 || line > breaks.length) return    
-    const endBreak = breaks[line] || {
-      offset: this.content.length,
-      lineLength: this.content.length
-    }
-    const startBreak = breaks[line - 1] || {
-      offset: -1,
-    }
-    
-    const start = startBreak.offset + 1
-        , end = endBreak.offset
-    return new Range({
-      start: new Location({
-        line: line + 1,
-        column: 1,
-        offset: start
-      }),
-      end: new Location({
-        line: line + 1,
-        column: endBreak.lineLength,
-        offset: end
-      }),
-      src: this.content.slice(start, end)
-    })
-  }
-
-  get lines() {
-    return Seq(lines(this))
-  }
-}
-
-function *lines(file) {  
-  for (let i = 0; i != file.count; ++i)
-    yield file.line(i)
 }
 
 
 class Range extends Record({
   file: new File('unknown.src', ''),
-  start: Location(),
-  end: Location(),
-  src: '',
+  start: new Location(),
+  end: new Location(),
 }) {
+  get src() {
+    return this.file.content.slice(this.start.offset, this.end.offset)
+  }
+
+  transform(transformer) {
+    return this.update('src', updater)
+  }
+
+  get asStringLiteral() {
+    return this.update('src', JSON.stringify)
+  }
+
+  // String facade
+  get length() {
+    return this.src.length
+  }
+
+  charAt(i) {
+    return this.src.charAt(i)
+  }
+
+  trim() {
+    const s = this.src
+        , spaceBefore = s.match(/\s*/)
+        , spaceAfter = s.match(/\s*$/)
+    return this.slice(spaceBefore.length, -spaceAfter.length)
+  }
+
+  charCodeAt(i) {
+    return this.src.charCodeAt(i)
+  }
+
+  substring(start, end) {
+    console.log('substring(%d, %d)', start, end)
+    return this.slice(start, end)
+  }
+
   [compile]({line, column, map, code}) {
     const {source,
            line: originalLine,
@@ -104,34 +122,55 @@ class Range extends Record({
 }
 
 const nl = '\n'.charCodeAt(0)
-function lineBreaks(str) {
-  const count = str.length;
-  const breaks = []
-  let lastBreak = 0
-  for (let i = 0; i != count; ++i) {
-    if (str.charCodeAt(i) === nl) {      
-      breaks.push({
-        offset: i,
-        lineLength: i - lastBreak
+function lines(file, str=file.content) {
+  const count = str.length
+      , lines = []
+  let start = new Location()
+    , {line, column, offset} = start
+
+  for (let offset = 0; offset != count; ++offset) {
+    if (str.charCodeAt(offset) === nl) {
+      const end = new Location({
+        line, column, offset
       })
-      lastBreak = i
+      lines.push(new Range({file, start, end}))
+      start = new Location({
+        line: end.line + 1,
+        column: 1,
+        offset: offset + 1
+      })
+      line++
+      column = 1  
     }
+    ++column
   }
-  return breaks
+
+  return lines
 }
 
-module.exports = {File, Range}
+module.exports = {Location, File, Range}
 
 async function main() {
   const file = await File.load('range.js')
-  for (let {src, start: {line: linum}} of file.lines) {
-    console.log("%d %s", linum, src)
-  }
+  // for (let line of file.lines) {
+  //   const {src, file, start: {line: linum}}  = line
+  //   console.log("%s %d %s", file, linum, src)
+  // }
 
   // for (let line of cut(new File('foo', 'hello'))) {
   //   console.log(line)
   // }
-  console.log(file.line(75))
+  // console.log(file.line(75))
+
+  console.log(file.lines[0])
+  console.log('line 1 src "%s"', file.lines[0].src)
+  console.log(file.locationAtOffset(100))
+  console.log(file.lines[0])
+  console.log(file.lines[1])
+  console.log('line 3:', file.lines[2].src)
+  console.log(file.content.slice(0, 100))
+  console.log(file.lineAtOffset(100).src)
+  
 }
 
-if (module === require.main) main()
+if (module === require.main) main().then(console.log, console.error)
