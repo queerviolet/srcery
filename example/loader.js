@@ -1,15 +1,26 @@
-const {src, Map} = require('..')
+const {src, literal} = require('..')
+    , {File} = require('../range')
 
-// const c = src `${Map(`throw new Error`, {line: 128, column: 256, source: 'abc.foo'})}`
+const compile = file => {
+  console.log('file.lines=', file.lines.length)
+  return src(file.lines.map(
+    (line, linum) => line.transform(line => src `
+      window.line${linum} = () => {
+        ${
+            line.transform(
+              line => src `throw new Error(${line [literal]})`
+            )
+        }
+      }`
+    )   
+  )).compile()
+}
 
-// console.log(c)
-
-// console.log(c.compile().gen.toString())
-
-module.exports = function () {  
-  const {code, map} = src `${
-    Map(`process.nextTick(() => {throw new Error})`,
-    {line: 2, column: 256, source: 'abc.foo'})}`.compile()
+module.exports = function (content) {  
+  const {code, map} = compile(File
+    .fromString(content, this.resourcePath))
   
+  map.setSourceContent(this.resourcePath, content)
+
   this.callback(null, code, map.toString())
 }

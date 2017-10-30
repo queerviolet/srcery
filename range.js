@@ -1,21 +1,97 @@
 'use strict'
 const {Record, Seq} = require('immutable')
-    , {compile} = require('.')
+    , compile = require('./compile')
+    , {literal} = require('.')
     , {promisify} = require('util')
     , {sortedIndexBy} = require('lodash')
 
 class Location {
-  constructor({line=1, column=1, offset=0}={}) {
+  constructor({line=1, column=0, offset=0}={}) {
     Object.assign(this, {line, column, offset})
   }
 
   toString() { return `Location(${JSON.stringify(this)})` }
 }
 
+class Range extends Record({
+  file: {path: 'unknown.src', content: ''},
+  start: new Location(),
+  end: new Location(),
+}) {
+  get src() {
+    return this.file.content.slice(
+      this.start.offset,
+      this.end.offset)
+  }
+
+  transform(transformer) {
+    return new TransformedRange(this, transformer)
+  }
+
+  get asStringLiteral() {
+    return this.transform(({src}) => JSON.stringify(src))
+  }
+
+  get [literal]() {
+    return this.asStringLiteral
+  }
+
+  // String facade
+  get length() {
+    return this.src.length
+  }
+
+  charAt(i) {
+    return this.src.charAt(i)
+  }
+
+  slice(start=0, end=this.length) {    
+    const {file} = this    
+    if (start < 0) start += this.length
+    if (end < 0) end += this.length
+    return this.merge({
+      file,
+      start: file.locationAtOffset(this.start.offset + start),
+      end: file.locationAtOffset(this.end.offset + end)
+    })
+  }
+
+  trim() {
+    const s = this.src
+        , spaceBefore = s.match(/^\s*/)[0]
+        , spaceAfter = s.match(/\s*$/)[0]
+    return this.slice(spaceBefore.length, -spaceAfter.length)
+  }
+
+  charCodeAt(i) {
+    return this.src.charCodeAt(i)
+  }
+
+  substring(start, end) {
+    return this.slice(start, end)
+  }
+
+  [compile]({line, column, map, code}) {
+    const {line: originalLine,
+           column: originalColumn} = this.start
+    const {path: source} = this.file
+    map.addMapping({
+      source, 
+      original: {line: originalLine, column: originalColumn},
+      generated: {line, column},
+    })
+    return this.src [compile] ({line, column, map, code})
+  }
+}
+
 class File {
   static load(path, {fs=require('fs'), encoding='utf-8'}={}) {
     return promisify(fs.readFile)(path, encoding)
       .then(src => new File(path, src))
+  }
+
+  static fromString(content, path) {
+    return new File(path, content)
   }
 
   toString() {
@@ -52,7 +128,7 @@ class File {
     if (!line) return
     return new Location({
       line: line.start.line,
-      column: offset - line.start.offset,
+      column: line.start.column + (offset - line.start.offset),
       offset
     })
   }
@@ -65,112 +141,68 @@ class File {
   }
 }
 
-
-class Range extends Record({
-  file: new File('unknown.src', ''),
-  start: new Location(),
-  end: new Location(),
-}) {
-  get src() {
-    return this.file.content.slice(this.start.offset, this.end.offset)
-  }
-
-  transform(transformer) {
-    return this.update('src', updater)
-  }
-
-  get asStringLiteral() {
-    return this.update('src', JSON.stringify)
-  }
-
-  // String facade
-  get length() {
-    return this.src.length
-  }
-
-  charAt(i) {
-    return this.src.charAt(i)
-  }
-
-  trim() {
-    const s = this.src
-        , spaceBefore = s.match(/\s*/)
-        , spaceAfter = s.match(/\s*$/)
-    return this.slice(spaceBefore.length, -spaceAfter.length)
-  }
-
-  charCodeAt(i) {
-    return this.src.charCodeAt(i)
-  }
-
-  substring(start, end) {
-    console.log('substring(%d, %d)', start, end)
-    return this.slice(start, end)
-  }
-
-  [compile]({line, column, map, code}) {
-    const {source,
-           line: originalLine,
-           column: originalColumn} = this.location
-    map.addMapping({
-      source, 
-      original: {line: originalLine, column: originalColumn},
-      generated: {line, column},
-    })
-    return this.src [compile] ({line, column, map, code})
-  }
-}
-
 const nl = '\n'.charCodeAt(0)
 function lines(file, str=file.content) {
   const count = str.length
       , lines = []
   let start = new Location()
     , {line, column, offset} = start
+    , lastWasNl = false
 
-  for (let offset = 0; offset != count; ++offset) {
+  function addLine() {
+    const end = new Location({
+      line, column, offset
+    })
+    const range = new Range({file, start, end})
+    lines.push(range)
+    start = new Location({
+      line: end.line + 1,
+      column: 0,
+      offset: offset + 1
+    })
+    line++
+    column = 0
+  }
+
+  for (offset = 0; offset != count; ++offset) {
+    lastWasNl = false
     if (str.charCodeAt(offset) === nl) {
-      const end = new Location({
-        line, column, offset
-      })
-      lines.push(new Range({file, start, end}))
-      start = new Location({
-        line: end.line + 1,
-        column: 1,
-        offset: offset + 1
-      })
-      line++
-      column = 1  
+      lastWasNl = true
+      addLine() 
     }
     ++column
+  }
+
+  if (!lastWasNl) {
+    addLine()
   }
 
   return lines
 }
 
-module.exports = {Location, File, Range}
+class TransformedRange {
+  constructor(parent, transformer) {
+    this.parent = parent
+    this.dst = transformer(parent)
+  }
 
-async function main() {
-  const file = await File.load('range.js')
-  // for (let line of file.lines) {
-  //   const {src, file, start: {line: linum}}  = line
-  //   console.log("%s %d %s", file, linum, src)
-  // }
+  get start() { return this.parent.start }
+  get end() { return this.parent.end }
+  get file() { return this.parent.file }
+  get src() { return this.dst }  
 
-  // for (let line of cut(new File('foo', 'hello'))) {
-  //   console.log(line)
-  // }
-  // console.log(file.line(75))
-
-  console.log(file.lines[0])
-  console.log('line 1 src "%s"', file.lines[0].src)
-  console.log(file.locationAtOffset(100))
-  console.log(file.lines[0])
-  console.log(file.lines[1])
-  console.log('line 3:', file.lines[2].src)
-  console.log(file.content.slice(0, 100))
-  console.log(file.lineAtOffset(100).src)
-  
+  [compile](state) {
+    const {line: originalLine,
+           column: originalColumn} = this.start
+    const {path: source} = this.file
+    const {line, column, map} = state
+    map.addMapping({
+      source, 
+      original: {line: originalLine, column: originalColumn},
+      generated: {line, column},
+    })
+    return this.dst [compile] (state)
+  }
 }
 
-if (module === require.main) main().then(console.log, console.error)
+module.exports = {Location, File, Range}

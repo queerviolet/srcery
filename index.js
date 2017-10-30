@@ -1,6 +1,7 @@
 'use strict'
 
 const {SourceMapGenerator} = require('source-map')
+    , compile = require('./compile')
 
 function src (raw, ...args) {
   const pieces = []
@@ -13,69 +14,50 @@ function src (raw, ...args) {
   return new Piece(pieces)
 }
 
-function Map(src, location) {
-  return new MappedPiece(src, location)
-}
-
-function compile(target, ...args) {
-  return target [compile] (...args)
-}
-const compileSymbol = Symbol('compile')
-compile [Symbol.toPrimitive] = function() {
-  return compileSymbol
-}
-
 class Piece {
   constructor(pieces) {
     this.pieces = pieces
   }
 
   compile(map=new SourceMapGenerator()) {
-    const count = this.pieces.length
     let state = {
       line: 1,
       column: 1,
       map,      
       code: '',
     }
-    for (let i = 0; i != count; ++i) {
-      state = this.pieces[i] [compile] (state)
-    }
-    return state
+    console.log('compile=', compile[Symbol.toPrimitive]())// 'compile[toPrimitive]=', compile[Symbol.toPrimitive]())
+    return this[compile](state)
   }
 
   [compile](state) {
-    return this.compile(state)
+    return this.pieces[compile](state)
   }
 }
 
-class MappedPiece {
-  constructor(src, location) {
-    this.src = src
-    this.location = location
-  }
-
-  [compile]({line, column, map, code}) {
-    const {source,
-           line: originalLine,
-           column: originalColumn} = this.location
-    map.addMapping({
-      source, 
-      original: {line: originalLine, column: originalColumn},
-      generated: {line, column},
-    })    
-    return this.src [compile] ({line, column, map, code})
-  }
+function literal(target) {
+  return target [literal]
+}
+const literalSymbol = Symbol('literal')
+literal [Symbol.toPrimitive] = function() {
+  return literalSymbol
 }
 
-String.prototype [compile] = function({line, column, map, code}) {
-  const count = this.length
-  for (let i = 0; i != count; ++i) {
-    const c = this[i]
-    ++column; if (c === '\n') ++line
-    code += c
+Object.defineProperty(String.prototype, literal, {
+  get() {
+    return JSON.stringify(this)
   }
-  return {line, column, map, code}  
-}
+})
+
+Object.defineProperty(Array.prototype, literal, {
+  get() {
+    return [
+      '[',
+      ...this.reduce((all, one) => (all.push(one, ','), all), []),
+      ']'
+    ]
+  }
+})
+
 
 module.exports = {src, Map, compile}
