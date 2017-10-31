@@ -49,10 +49,17 @@ class Range extends Record({
     const {file} = this    
     if (start < 0) start += this.length
     if (end < 0) end += this.length
+    const startOffset = this.start.offset + start
+        , endOffset = this.start.offset + end
+        , startLoc = file.locationAtOffset(startOffset)
+        , endLoc = file.locationAtOffset(endOffset)
+    if (!startLoc) throw new Error(`invalid start: ${startLoc} offst:${startOffset}`)
+    if (!endLoc) throw new Error(`invalid end: ${endLoc} offset:${endOffset}`)
+        
     return this.merge({
       file,
-      start: file.locationAtOffset(this.start.offset + start),
-      end: file.locationAtOffset(this.end.offset + end)
+      start: startLoc,
+      end: endLoc,
     })
   }
 
@@ -60,7 +67,7 @@ class Range extends Record({
     const s = this.src
         , spaceBefore = s.match(/^\s*/)[0]
         , spaceAfter = s.match(/\s*$/)[0]
-    return this.slice(spaceBefore.length, -spaceAfter.length)
+    return this.slice(spaceBefore.length, s.length - spaceAfter.length)
   }
 
   charCodeAt(i) {
@@ -118,9 +125,11 @@ class File {
 
   lineAtOffset(offset) {
     const {lines} = this
-    return lines[sortedIndexBy(lines,
+    const idx = sortedIndexBy(lines,
       {end: {offset}},
-      ({end: {offset}}) => offset)]
+      ({end: {offset}}) => offset)
+    if (idx === lines.length) return lines[idx - 1]
+    return lines[idx]
   }
 
   locationAtOffset(offset) {
@@ -128,7 +137,7 @@ class File {
     if (!line) return
     return new Location({
       line: line.start.line,
-      column: line.start.column + (offset - line.start.offset),
+      column: line.start.column + (offset - line.start.offset - 1),
       offset
     })
   }

@@ -60,4 +60,4 @@ Object.defineProperty(Array.prototype, literal, {
 })
 
 
-module.exports = {src, Map, compile}
+module.exports = src

@@ -19,7 +19,7 @@ String.prototype [compile] = function({line, column, map, code}) {
     ++column; if (c === '\n') ++line
     code += c
   }
-  return {line, column, map, code}  
+  return {line, column, map, code}
 }
 
 Array.prototype [compile] = function(state) {

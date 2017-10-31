@@ -1,9 +1,7 @@
 const {src, literal} = require('..')
     , {File} = require('../range')
 
-const compile = file => {
-  console.log('file.lines=', file.lines.length)
-  return src(file.lines.map(
+const compile = file => src(file.lines.map(
     (line, linum) => line.transform(line => src `
       window.line${linum} = () => {
         ${
@@ -14,7 +12,6 @@ const compile = file => {
       }`
     )   
   )).compile()
-}
 
 module.exports = function (content) {  
   const {code, map} = compile(File
